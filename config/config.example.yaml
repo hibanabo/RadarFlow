@@ -1,0 +1,67 @@
+# ===== AI 摘要配置 =====
+ai:
+  enabled: false                   # 设为 true 启用 AI 摘要
+  base_url: "https://api.example.com/v1"              # OpenAI 兼容接口地址 这里推荐白嫖豆包大模型 具体可看 https://www.volcengine.com/docs/82379/1399008?lang=zh
+  model: "demo-model"                                 # 模型名称
+  api_key: ""                                         # 可留空
+  prompt_file: "prompts/news_summary.md"              # Prompt 模板
+  system_prompt: "你是一名资深中文新闻编辑，请根据提供的信息生成结构化摘要。"
+  identity_hint: ""                # 立场/身份说明，会插入提示词
+  reasoning_effort: "minimal"       # 部分模型支持的推理强度
+  temperature: 0.2                  # 随机性，越低越稳定
+  timeout_sec: 60                   # 接口超时秒数
+  max_items: 10                     # 每次最多处理多少条新闻
+  use_article_body: true            # 是否把全文正文传给 AI（false 时仅发送标题+摘要）
+
+ai_filter:
+  enabled: true                    # true 时启用 AI 后置过滤（仅控制通知）如果不启动 AI 不会生效
+  categories:
+    include: ["政治","军事","外交"]  # 可选：科技/政治/经济/金融/军事/外交/安全/社会/能源/消费/企业/其他
+    exclude: []
+  sentiments:
+    include: ["negative"]          # 允许推送的情绪标签（positive/neutral/negative）
+    exclude: []
+
+# ===== 过滤规则 =====
+filters:
+  enabled: true
+  default_action: "deny"            # 默认动作：未命中规则时拒绝
+  rules:
+    - name: "中国and(美国or日本)"
+      action: "allow"
+      all_of: ["中国"]
+      any_of: ["美国", "日本"]
+      none_of: []
+
+# ===== 通知配置 =====
+notification:
+  enable: true                     # 是否开启推送
+  title: "今日舆情简报"              # 邮件等渠道的标题
+  items_per_message: 5             # 每条消息包含的新闻数量
+  display_summary: false           # 是否在通知正文中显示摘要（false 仅保留标题/关键词/情绪）
+
+  # 通过微信企业 bot 推送
+  wechat_work:
+    webhook_url: ""                # 企业微信机器人 Webhook
+    msgtype: "text"                # text / markdown
+
+  # 通过telegram bot 推送
+  telegram:
+    bot_token: ""                  # Telegram Bot Token
+    chat_id: ""                    # Telegram 频道/群 ID
+
+
+# ===== 定时调度 =====
+scheduler:
+  enabled: true                    # true 时启用 cron 调度
+  run_on_start: true               # 启动后立即执行一次
+  cron:
+    - "0,30 9-20 * * *"
+    - "0 21 * * *"
+  max_runs: null
+
+# ===== 时区设置 =====
+timezone:
+  name: "Asia/Shanghai"            # IANA 时区名
+  offset_hours: 8                  # 若无法解析 name，则使用固定偏移
+  display_format: "%Y-%m-%d %H:%M"
