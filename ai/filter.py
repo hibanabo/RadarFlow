@@ -42,6 +42,11 @@ class AISummaryFilter:
         filtered_summary_map: Dict[str, AISummary] = {}
         removed = 0
         for record in records:
+            raw = record.raw if isinstance(record.raw, dict) else {}
+            if raw.get("_ai_summary_blocked"):
+                removed += 1
+                logger.info("AI 摘要被拦截，跳过: %s - %s", record.source, record.title)
+                continue
             key = self._record_key(record)
             summary = summary_map.get(key)
             if self._should_keep(summary):
@@ -58,6 +63,8 @@ class AISummaryFilter:
     def _should_keep(self, summary: Optional[AISummary]) -> bool:
         if summary is None:
             return not self._requires_summary_fields()
+        if isinstance(summary.meta, dict) and summary.meta.get("_fallback_no_ai"):
+            return True
         if not self._match_categories(summary):
             return False
         if not self._match_sentiment(summary):

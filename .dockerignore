@@ -1,9 +1,64 @@
+# Git
 .git
+.gitignore
+.github
+
+# Python
 __pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
 .pytest_cache
 .mypy_cache
+.ruff_cache
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
 .venv
 env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific
 state/
 outputs/
 *.sqlite
+*.db
+
+# Config files (use example instead)
+config/config.yaml
+config/config-豆包.yaml
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# CI/CD
+.github/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test files
+tests/
+*.html

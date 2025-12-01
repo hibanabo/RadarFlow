@@ -7,6 +7,7 @@ import os
 import re
 import smtplib
 import logging
+from datetime import datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -144,7 +145,10 @@ class NotificationClient:
         sorted_news = self._sort_records_by_rule(news)
         last_group: Optional[Tuple[int, str]] = None
         separator = "\n\n\n" if style in {"text", "markdown"} else "\n\n"
+        dispatch_header = ""
         for item in sorted_news:
+            if count == 0:
+                dispatch_header = self._format_dispatch_header(style=style)
             summary = self._lookup_summary(summaries, item)
             group_key = self._group_key(item)
             header = ""
@@ -153,6 +157,8 @@ class NotificationClient:
             block = self._render_block(item, summary, style=style, show_category_line=False)
             if header:
                 block = f"{header}\n\n{block}" if block else header
+            if count == 0 and dispatch_header:
+                block = f"{dispatch_header}\n\n{block}" if block else dispatch_header
             last_group = group_key
             current.append(block)
             count += 1
@@ -184,6 +190,19 @@ class NotificationClient:
         if style == "markdown":
             return f"**[{display}]**"
         return f"[{display}]"
+
+    def _format_dispatch_header(self, *, style: str) -> str:
+        now_local = datetime.now(self.tz_helper.tzinfo)
+        display_time = now_local.strftime(self.tz_helper.display_format)
+        tz_name = now_local.tzname()
+        text = f"🕒 推送时间：{display_time}"
+        if tz_name:
+            text = f"{text} ({tz_name})"
+        if style == "telegram":
+            return f"<b>{html.escape(text)}</b>"
+        if style == "markdown":
+            return f"**{text}**"
+        return text
 
     def _render_block(
         self,
@@ -219,6 +238,7 @@ class NotificationClient:
         sentiment = self._extract_sentiment(summary) if has_ai else None
         sentiment_line = self._format_sentiment_line(sentiment)
         entity_items = self._collect_entity_strings(summary) if has_ai else []
+        display_title = self._display_title(summary, item)
         if style == "telegram":
             return self._render_block_telegram(
                 item=item,
@@ -229,13 +249,14 @@ class NotificationClient:
                 sentiment_line=sentiment_line,
                 entity_items=entity_items,
                 summary_text=summary_text,
+                display_title=display_title,
                 show_category_line=show_category_line,
             )
 
         block: List[str] = []
         if show_category_line and category:
             block.append(f"[{category}]")
-        title_line = self._render_plain_title_with_link(item)
+        title_line = self._render_plain_title_with_link(item, display_title)
         block.extend(
             [
                 title_line,
@@ -268,6 +289,12 @@ class NotificationClient:
             summary=record.summary or "",
             sentiment=None,
         )
+
+    def _display_title(self, summary: AISummary, item: NewsRecord) -> str:
+        title = (summary.title or "").strip()
+        if not title:
+            return item.title or "未命名"
+        return title
 
     def _trim_summary(self, text: str, max_lines: int = 3, max_chars: int = 300) -> str:
         if not text:
@@ -308,6 +335,7 @@ class NotificationClient:
         sentiment_line: Optional[str],
         entity_items: List[str],
         summary_text: str,
+        display_title: str,
         show_category_line: bool,
     ) -> str:
         def esc(value: Optional[str]) -> str:
@@ -318,7 +346,7 @@ class NotificationClient:
             lines.append(f"[{esc(category)}]")
         lines.extend(
             [
-                self._render_title_with_link(item, esc),
+                self._render_title_with_link(item, esc, display_title),
                 f"🌍 关键词：{esc(keywords_text) or '未标注'}",
                 f"🕒 {esc(publish_time or '未知时间')} | 🏷 {esc(source)}",
             ]
@@ -334,15 +362,17 @@ class NotificationClient:
         )
         return "\n".join(filter(None, lines))
 
-    def _render_title_with_link(self, item: NewsRecord, esc) -> str:
+    def _render_title_with_link(self, item: NewsRecord, esc, display_title: str) -> str:
+        title = display_title or item.title or "未命名"
         if item.url:
-            return f"📰 <a href=\"{esc(item.url)}\">{esc(item.title or '未命名')}</a>"
-        return f"📰 {esc(item.title or '未命名')}"
+            return f"📰 <a href=\"{esc(item.url)}\">{esc(title)}</a>"
+        return f"📰 {esc(title)}"
 
-    def _render_plain_title_with_link(self, item: NewsRecord) -> str:
+    def _render_plain_title_with_link(self, item: NewsRecord, display_title: str) -> str:
+        title = display_title or item.title or "未命名"
         if item.url:
-            return f"📰 [{item.title or '未命名'}]({item.url})"
-        return f"📰 {item.title or '未命名'}"
+            return f"📰 [{title}]({item.url})"
+        return f"📰 {title}"
 
     def _has_ai_payload(self, summary: AISummary) -> bool:
         if getattr(summary, "is_ai", False):

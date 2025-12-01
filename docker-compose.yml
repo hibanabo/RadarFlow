@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  radarflow:
+    image: ghcr.io/yourusername/radarflow:latest
+    # 如果要使用本地构建，注释上一行，取消下一行注释
+    # build: .
+    container_name: radarflow
+    restart: unless-stopped
+
+    volumes:
+      - ./config:/app/config:ro     # 只读挂载配置
+      - ./state:/app/state           # 读写挂载状态数据库
+
+    environment:
+      # AI API 配置
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ARK_API_KEY=${ARK_API_KEY:-}
+
+      # 通知渠道配置
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - WEWORK_WEBHOOK=${WEWORK_WEBHOOK:-}
+      - FEISHU_WEBHOOK=${FEISHU_WEBHOOK:-}
+      - DINGTALK_WEBHOOK=${DINGTALK_WEBHOOK:-}
+
+      # 邮件配置（可选）
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
+
+    # 从 .env 文件读取环境变量（推荐）
+    env_file:
+      - .env
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

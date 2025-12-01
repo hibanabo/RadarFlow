@@ -47,7 +47,6 @@ class ThePaperHandpickFetcher(BaseNewsFetcher):
             "filterIdArray": self.filter_ids,
             "pageNum": self.page_num,
         }
-        logger.info("调用澎湃要闻接口: %s", payload)
         resp = self.session.post(self.api_url, json=payload, timeout=15)
         resp.raise_for_status()
         data = resp.json().get("data") or {}

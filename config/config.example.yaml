@@ -1,67 +1,180 @@
-# ===== AI 摘要配置 =====
-ai:
-  enabled: false                   # 设为 true 启用 AI 摘要
-  base_url: "https://api.example.com/v1"              # OpenAI 兼容接口地址 这里推荐白嫖豆包大模型 具体可看 https://www.volcengine.com/docs/82379/1399008?lang=zh
-  model: "demo-model"                                 # 模型名称
-  api_key: ""                                         # 可留空
-  prompt_file: "prompts/news_summary.md"              # Prompt 模板
-  system_prompt: "你是一名资深中文新闻编辑，请根据提供的信息生成结构化摘要。"
-  identity_hint: ""                # 立场/身份说明，会插入提示词
-  reasoning_effort: "minimal"       # 部分模型支持的推理强度
-  temperature: 0.2                  # 随机性，越低越稳定
-  timeout_sec: 60                   # 接口超时秒数
-  max_items: 10                     # 每次最多处理多少条新闻
-  use_article_body: true            # 是否把全文正文传给 AI（false 时仅发送标题+摘要）
+# ===== 基础设置 =====
+timezone:
+  name: "Asia/Shanghai"            # IANA 时区名，优先应用
+  offset_hours: 8                  # 若无法解析 name，则使用固定偏移（小时）
+  display_format: "%Y-%m-%d %H:%M" # 通知等渠道展示时间的格式
 
-ai_filter:
-  enabled: true                    # true 时启用 AI 后置过滤（仅控制通知）如果不启动 AI 不会生效
-  categories:
-    include: ["政治","军事","外交"]  # 可选：科技/政治/经济/金融/军事/外交/安全/社会/能源/消费/企业/其他
-    exclude: []
-  sentiments:
-    include: ["negative"]          # 允许推送的情绪标签（positive/neutral/negative）
-    exclude: []
+scheduler:
+  enabled: true                    # true 时启用 cron 调度，false 则只运行一次
+  run_on_start: true               # 启动后立即执行一次
+  cron:
+    - "0 * * * *"                  # 每小时执行一次
+  max_runs: null                   # 限制执行次数（null 表示无限次）
 
-# ===== 过滤规则 =====
+# ===== 数据处理流水线（去重→AI 预过滤→关键词过滤→AI 摘要→AI 后置过滤→通知） =====
+ai_prefilter:
+  enabled: true                   # true 时在关键词过滤前调用轻量模型做语义初筛
+  base_url: "https://api.deepseek.com"  # 默认可复用 ai.base_url
+  model: "deepseek-chat"                 # 默认可复用 ai.model
+  api_key: ""                      # 默认可复用 ai.api_key，也可单独指定
+  prompt_file: "prompts/ai_prefilter.md"               # 自定义 Prompt 模板
+  system_prompt: "你是一名资深的跨语言新闻审核员，负责判断新闻是否与监测词相关。"
+  reasoning_effort: "minimal"       # 可选：部分模型支持的推理强度
+  temperature: 0.1                  # 预过滤建议使用较低温度
+  timeout_sec: 30                   # 接口超时秒数
+  include_article_body: true       # 是否在摘要之外追加正文
+  max_text_chars: 300              # 发送给模型的文本最大字符数
+  max_workers: 4                   # 并发调用 AI 预过滤的线程数
+  fail_open_on_error: true         # AI 拒答/错误时是否放行新闻
+  log_rejections: true             # true 时在日志中输出被预过滤剔除的新闻
+
 filters:
   enabled: true
-  default_action: "deny"            # 默认动作：未命中规则时拒绝
+  default_action: "deny"
   rules:
-    - name: "中国and(美国or日本)"
+    - name: "中国/台湾 与 美日韩北约"
       action: "allow"
-      all_of: ["中国"]
-      any_of: ["美国", "日本"]
+      all_of:
+        - ["中国", "台湾","香港","中国大陆","北京"]
+        - ["美国", "日本", "韩国", "北约", "北大西洋公约组织"]
+      none_of: []
+    - name: "中国/台湾 与 东南亚国家"
+      action: "allow"
+      all_of:
+        - ["中国", "台湾","香港","中国大陆","北京"]
+        - ["越南", "老挝", "柬埔寨", "泰国", "缅甸", "马来西亚", "新加坡", "菲律宾", "印度尼西亚", "文莱", "东帝汶"]
+      none_of: []
+    - name: "中国/台湾 与 欧盟国家"
+      action: "allow"
+      all_of:
+        - ["中国", "台湾","香港","中国大陆","北京"]
+        - [
+            "德国",
+            "法国",
+            "意大利",
+            "西班牙",
+            "葡萄牙",
+            "荷兰",
+            "比利时",
+            "卢森堡",
+            "奥地利",
+            "爱尔兰",
+            "丹麦",
+            "芬兰",
+            "瑞典",
+            "波兰",
+            "捷克",
+            "斯洛伐克",
+            "匈牙利",
+            "斯洛文尼亚",
+            "克罗地亚",
+            "罗马尼亚",
+            "保加利亚",
+            "希腊",
+            "塞浦路斯",
+            "马耳他",
+            "爱沙尼亚",
+            "拉脱维亚",
+            "立陶宛",
+          ]
+      none_of: []
+    - name: "中国/台湾 与 一带一路沿线"
+      action: "allow"
+      all_of:
+        - ["中国", "台湾","香港","中国大陆","北京"]
+        - [
+            "俄罗斯",
+            "白俄罗斯",
+            "乌克兰",
+            "波黑",
+            "塞尔维亚",
+            "土耳其",
+            "沙特",
+            "阿联酋",
+            "卡塔尔",
+            "科威特",
+            "阿曼",
+            "巴林",
+            "埃及",
+            "埃塞俄比亚",
+            "肯尼亚",
+            "坦桑尼亚",
+            "尼日利亚",
+            "南非",
+            "哈萨克斯坦",
+            "乌兹别克斯坦",
+            "土库曼斯坦",
+            "吉尔吉斯斯坦",
+            "塔吉克斯坦",
+            "巴基斯坦",
+            "孟加拉国",
+            "斯里兰卡",
+            "尼泊尔",
+            "老挝",
+            "柬埔寨",
+            "泰国",
+            "越南",
+            "马来西亚",
+            "印度尼西亚",
+            "菲律宾",
+            "新加坡",
+            "文莱",
+            "东帝汶",
+            "伊朗",
+            "伊拉克",
+          ]
+      none_of: []
+    - name: "中国/台湾 与 南亚国家"
+      action: "allow"
+      all_of:
+        - ["中国", "台湾","香港","中国大陆","北京"]
+        - ["印度", "巴基斯坦", "孟加拉国", "斯里兰卡", "尼泊尔", "不丹", "马尔代夫", "阿富汗"]
       none_of: []
 
-# ===== 通知配置 =====
-notification:
-  enable: true                     # 是否开启推送
-  title: "今日舆情简报"              # 邮件等渠道的标题
-  items_per_message: 5             # 每条消息包含的新闻数量
-  display_summary: false           # 是否在通知正文中显示摘要（false 仅保留标题/关键词/情绪）
 
-  # 通过微信企业 bot 推送
+ai:
+  enabled: true                   # 设为 true 启用 AI 摘要
+  base_url: "https://api.deepseek.com"  # OpenAI 兼容接口地址
+  model: "deepseek-chat"                  # 模型名称
+  api_key: "sk-your-api-key-here"       # 可留空，优先读取环境变量
+  prompt_file: "prompts/news_summary.md"                # 自定义 Prompt 模板（可选）
+  system_prompt: "你是一名资深中文新闻编辑，请根据提供的信息生成结构化摘要。"
+  identity_hint: "你代表国家安全舆情监测团队，重点关注涉华潜在风险、敌对言论与负面事件，输出中需强调威胁与警示。"        # 立场/身份说明，会插入提示词，影响情绪/风险判断
+  reasoning_effort: "minimal"       # 部分模型支持的推理强度
+  temperature: 0.3                  # 随机性，越低越稳定
+  timeout_sec: 120                  # 接口超时秒数
+  max_items: -1                     # 每次最多处理多少条新闻（<=0 表示不限制）
+  max_workers: 4                    # 并发处理 AI 摘要的线程数
+  use_article_body: true            # 是否把全文正文传给 AI（false 时仅发送标题+摘要）
+  fail_open_on_error: true          # AI 摘要失败时是否改用原文片段（false 则直接拦截该新闻）
+
+ai_filter:
+  enabled: true                        # true 时启用 AI 后置过滤（仅控制通知）
+  categories:
+    include: ["政治", "安全", "军事","外交","社会","金融"]   # 允许推送的新闻类型：科技/政治/经济/金融/军事/外交/安全/社会/能源/消费/企业/其他
+    exclude: []                       # 排除的新闻类型，同上
+  sentiments:
+    include: ["negative"]             # 允许推送的情绪标签（positive/neutral/negative）
+    exclude: []                       # 排除的情绪标签
+
+notification:
+  enable: true                      # 是否开启推送
+  title: "今日舆情简报"               # 邮件等渠道的标题
+  items_per_message: 7              # 每条消息包含的新闻数量
+  display_summary: true            # 是否在通知正文中显示摘要（false 仅保留标题/关键词/情绪）
+  feishu:
+    webhook_url: ""                # 飞书机器人 Webhook
+  dingtalk:
+    webhook_url: ""                # 钉钉机器人 Webhook
   wechat_work:
     webhook_url: ""                # 企业微信机器人 Webhook
-    msgtype: "text"                # text / markdown
-
-  # 通过telegram bot 推送
+    msgtype: "markdown"            # text / markdown，默认 text
   telegram:
     bot_token: ""                  # Telegram Bot Token
     chat_id: ""                    # Telegram 频道/群 ID
-
-
-# ===== 定时调度 =====
-scheduler:
-  enabled: true                    # true 时启用 cron 调度
-  run_on_start: true               # 启动后立即执行一次
-  cron:
-    - "0,30 9-20 * * *"
-    - "0 21 * * *"
-  max_runs: null
-
-# ===== 时区设置 =====
-timezone:
-  name: "Asia/Shanghai"            # IANA 时区名
-  offset_hours: 8                  # 若无法解析 name，则使用固定偏移
-  display_format: "%Y-%m-%d %H:%M"
+  email:
+    from: ""                       # 发件邮箱
+    password: ""
+    to: ""                         # 收件人，多个用逗号分隔
+    smtp_server: ""
+    smtp_port: 465

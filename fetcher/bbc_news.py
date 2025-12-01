@@ -1,7 +1,6 @@
-"""BBC News 列表与详情抓取。"""
+"""BBC 英文新闻抓取器。"""
 from __future__ import annotations
 
-import json
 import logging
 from typing import List, Optional
 
@@ -9,12 +8,13 @@ import requests
 from bs4 import BeautifulSoup
 
 from .base_fetcher import BaseNewsFetcher, NewsRecord
+from .bbc_base import extract_schema_data, extract_body_from_next_data
 
 logger = logging.getLogger(__name__)
 
 
 class BBCNewsFetcher(BaseNewsFetcher):
-    """BBC 新闻频道抓取器。"""
+    """BBC 英文首页抓取器。"""
 
     name = "BBC News"
     base_url = "https://www.bbc.com"
@@ -24,8 +24,12 @@ class BBCNewsFetcher(BaseNewsFetcher):
         self.session = session or requests.Session()
 
     def get_news_list(self) -> List[NewsRecord]:
-        resp = self.session.get(self.base_url + self.listing_path, timeout=15)
-        resp.raise_for_status()
+        try:
+            resp = self.session.get(self.base_url + self.listing_path, timeout=15)
+            resp.raise_for_status()
+        except requests.RequestException as exc:  # noqa: BLE001
+            logger.warning("抓取 BBC 英文列表页失败: %s", exc)
+            return []
         return self._parse_listing(resp.text)
 
     def _parse_listing(self, html: str) -> List[NewsRecord]:
@@ -70,7 +74,7 @@ class BBCNewsFetcher(BaseNewsFetcher):
             return record
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        article_schema = self._extract_schema(soup)
+        article_schema = extract_schema_data(soup)
         if article_schema:
             body = article_schema.get("articleBody")
             if body:
@@ -80,55 +84,11 @@ class BBCNewsFetcher(BaseNewsFetcher):
             if not record.published_at:
                 record.published_at = article_schema.get("datePublished")
             record.raw["schema"] = article_schema
-        body_from_next = self._extract_body_from_next_data(soup)
+        body_from_next = extract_body_from_next_data(soup)
         if body_from_next:
             record.raw["content_text"] = body_from_next
             if not record.summary:
                 record.summary = body_from_next[:120]
-        if not record.published_at:
-            record.published_at = article_schema.get("datePublished") if article_schema else record.published_at
         if "content_text" not in record.raw:
             record.raw.setdefault("detail_html", resp.text)
         return record
-
-    def _extract_schema(self, soup: BeautifulSoup) -> Optional[dict]:
-        for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
-            if not script.string:
-                continue
-            try:
-                data = json.loads(script.string)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict) and data.get("@type") in {"NewsArticle", "Article", "ReportageNewsArticle"}:
-                return data
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and item.get("@type") in {"NewsArticle", "Article", "ReportageNewsArticle"}:
-                        return item
-        return None
-
-    def _extract_body_from_next_data(self, soup: BeautifulSoup) -> Optional[str]:
-        script = soup.find("script", id="__NEXT_DATA__")
-        if not script or not script.string:
-            return None
-        try:
-            data = json.loads(script.string)
-        except json.JSONDecodeError:
-            return None
-        page = data.get("props", {}).get("pageProps", {}).get("page")
-        if not isinstance(page, dict):
-            return None
-        page_obj = next(iter(page.values()), None)
-        if not isinstance(page_obj, dict):
-            return None
-        contents = page_obj.get("contents", [])
-        paragraphs: List[str] = []
-        for block in contents:
-            if block.get("type") != "text":
-                continue
-            for sub in block.get("model", {}).get("blocks", []):
-                if sub.get("type") == "paragraph":
-                    text = sub.get("model", {}).get("text")
-                    if text:
-                        paragraphs.append(text.strip())
-        return "\n\n".join(paragraphs) if paragraphs else None

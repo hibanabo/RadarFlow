@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fetcher.base_fetcher import NewsRecord
 from utils.config_loader import DEFAULT_CONFIG_PATH, load_settings
@@ -18,22 +18,69 @@ DEFAULT_FILTER_PATH = DEFAULT_CONFIG_PATH
 class FilterRule:
     name: str
     action: str = "allow"  # allow or deny
-    all_of: List[str] = field(default_factory=list)
-    any_of: List[str] = field(default_factory=list)
-    none_of: List[str] = field(default_factory=list)
+    all_of: List[Any] = field(default_factory=list)
+    any_of: List[Any] = field(default_factory=list)
+    none_of: List[Any] = field(default_factory=list)
     enabled: bool = True
+
+    def __post_init__(self) -> None:
+        self._all_groups = self._prepare_groups(self.all_of)
+        self._any_tokens = self._prepare_tokens(self.any_of)
+        self._none_tokens = self._prepare_tokens(self.none_of)
 
     def matches(self, text: str) -> bool:
         if not self.enabled:
             return False
         lowered = text.lower()
-        if self.all_of and any(keyword.lower() not in lowered for keyword in self.all_of):
+        if self._all_groups and any(not self._group_matches(group, lowered) for group in self._all_groups):
             return False
-        if self.any_of and not any(keyword.lower() in lowered for keyword in self.any_of):
+        if self._any_tokens and not any(token in lowered for token in self._any_tokens):
             return False
-        if self.none_of and any(keyword.lower() in lowered for keyword in self.none_of):
+        if self._none_tokens and any(token in lowered for token in self._none_tokens):
             return False
         return True
+
+    def _prepare_groups(self, values: Iterable[Any]) -> List[List[str]]:
+        groups: List[List[str]] = []
+        for raw in values or []:
+            group: List[str] = []
+            if isinstance(raw, str):
+                token = raw.strip().lower()
+                if token:
+                    group.append(token)
+            elif isinstance(raw, Sequence):
+                for item in raw:
+                    token = str(item).strip().lower()
+                    if token:
+                        group.append(token)
+            else:
+                token = str(raw).strip().lower()
+                if token:
+                    group.append(token)
+            if group:
+                groups.append(group)
+        return groups
+
+    def _prepare_tokens(self, values: Iterable[Any]) -> List[str]:
+        tokens: List[str] = []
+        for raw in values or []:
+            if isinstance(raw, str):
+                token = raw.strip().lower()
+                if token:
+                    tokens.append(token)
+            elif isinstance(raw, Sequence):
+                for item in raw:
+                    token = str(item).strip().lower()
+                    if token:
+                        tokens.append(token)
+            else:
+                token = str(raw).strip().lower()
+                if token:
+                    tokens.append(token)
+        return tokens
+
+    def _group_matches(self, group: List[str], lowered_text: str) -> bool:
+        return any(token in lowered_text for token in group)
 
 
 class FilterSet:
@@ -44,6 +91,7 @@ class FilterSet:
         self.enabled = False
         self.default_action = "allow"
         self.rules: List[FilterRule] = []
+        self._rule_index_map: Dict[str, int] = {}
         self._load()
 
     def _load(self) -> None:
@@ -64,14 +112,19 @@ class FilterSet:
                 enabled=rule_cfg.get("enabled", True),
             )
             self.rules.append(rule)
+        self._rule_index_map = {rule.name: idx for idx, rule in enumerate(self.rules)}
 
     def apply(self, records: Iterable[NewsRecord]) -> List[NewsRecord]:
         if not self.enabled or not self.rules:
             return list(records)
         allowed: List[NewsRecord] = []
         for record in records:
-            text = self._combine_text(record)
-            action, rule_name, rule_index = self._evaluate(text)
+            prefilter_override = self._prefilter_override(record)
+            if prefilter_override is not None:
+                action, rule_name, rule_index = prefilter_override
+            else:
+                text = self._combine_text(record)
+                action, rule_name, rule_index = self._evaluate(text)
             if action == "allow":
                 if isinstance(record.raw, dict):
                     if rule_name:
@@ -89,6 +142,36 @@ class FilterSet:
             if rule.matches(text):
                 return rule.action, rule.name, idx
         return self.default_action, None, None
+
+    def _prefilter_override(self, record: NewsRecord) -> Optional[Tuple[str, Optional[str], Optional[int]]]:
+        if not isinstance(record.raw, dict):
+            return None
+        relevant = record.raw.get("_prefilter_relevant")
+        if relevant is None:
+            return None
+        is_relevant = bool(relevant)
+        if not is_relevant:
+            return "deny", None, None
+        rule_name, rule_index = self._resolve_prefilter_rule(record)
+        return "allow", rule_name, rule_index
+
+    def _resolve_prefilter_rule(self, record: NewsRecord) -> Tuple[Optional[str], Optional[int]]:
+        if not isinstance(record.raw, dict):
+            return None, None
+        rules_field = record.raw.get("_prefilter_rules")
+        candidates: List[str] = []
+        if isinstance(rules_field, str):
+            candidates = [rules_field]
+        elif isinstance(rules_field, Sequence):
+            for item in rules_field:
+                text = str(item or "").strip()
+                if text:
+                    candidates.append(text)
+        for name in candidates:
+            index = self._rule_index_map.get(name)
+            if index is not None:
+                return name, index
+        return (candidates[0] if candidates else None), None
 
     def _combine_text(self, record: NewsRecord) -> str:
         parts = [
